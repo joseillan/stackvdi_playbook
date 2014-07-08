@@ -4,24 +4,84 @@
   vars_files:
   - vars.yml
   tasks:
-  - name: ensure nginx is at the latest version
-    apt: pkg=nginx state=latest
-
-  - name: ensure mysql-client is at the latest version
+  - name: Install necessary services
     action: apt name={{ item }}
     with_items:
-    - "python-mysqldb"
+    - "mysql-client-5.5"
     - "mysql-server"
-#    - "php5-mysql"
+    - "nginx-full"
+    - "redis-server"
+    - "git"
+    - "libmysqlclient-dev"
+    - "postfix"
+    - "imagemagick"
 
-#  - name: ensure php is at the latest version
-#    action: apt name={{ item }}
-#    with_items:
-#    - "php5-fpm"
+  - name: create .my.cnf file
+    copy: src=.my.cnf dest=~/
 
-#  - name: configure index.php
-#    copy: src=index.php dest=/usr/share/nginx/html
-#  - service: name=nginx state=started
+  - name: create openvdi_production database
+    mysql_db: name=openvdi_production state=present
+
+  - name: update mysql root password for all root accounts
+    mysql_user: name=root host={{ item }} priv=*.*:ALL,GRANT password={{ mysql_root_password }}
+    with_items:
+    - "{{ ansible_hostname }}"
+    - 127.0.0.1
+    - ::1
+    - localhost
+#    - %
+
+  - name: create db user
+    action: mysql_user name=openvdi host={{ item }} password={{ mysql_openvdi_password }} priv=phpproject.prueba1:SELECT,INSERT,UPDATE,DELETE state=present
+    with_items:                                                             
+    - "{{ ansible_hostname }}"
+    - 127.0.0.1
+    - ::1
+    - localhost
+#    - %
+
+#  - name: allow remote access
+#    action: shell sed 's/127.0.0.1/{{ ip_mysql_server }}/g' /etc/mysql/my.cnf > /etc/mysql/my2.cnf
+
+#  - name: rename my2.cnf
+#    action: shell mv /etc/mysql/my2.cnf /etc/mysql/my.cnf
+   
+  - service: name=mysql state=started
+
+  - name: create user openvdi and add to groups adm & sudo
+    user: name=openvdi password={{ user_openvdi_password }} shell=/bin/bash groups=adm,sudo append=yes
+
+#  - name: create openvdi user
+#    shell: adduser openvdi
+#  - name: add openvdi user to adm group
+#    shell: adduser openvdi adm
+#  - name: add openvdi user to sudo group
+#    shell: adduser openvdi sudo
+
+- hosts: all
+#  sudo: yes
+  sudo_user: openvdi
+  vars_files:
+  - vars.yml
+  tasks:
+# Install Ruby
+  - shell: \curl -sSL https://get.rvm.io | bash -s stable
+  - shell: source /home/openvdi/.rvm/scripts/rvm
+  - shell: rvm install 2.0
+
+  - name: no check server certificate
+    shell: sed -i 's/sslVerify = true/sslVerify = false/' /~/.gitconfig
+
+- hosts: all
+  sudo: yes
+  vars_files: 
+  - vars.yml
+  tasks:
+  - name: create broker directory
+    file: path=/var/www/openvdi state=directory owner=openvdi group=openvdi mode=0755
+
+  - name: create applet directory
+    file: path/var/www/openvdi/broker/public/applet state=directory owner=openvdi group=openvdi mode=0755
 
   - name: ensure nginx ssl directory is created
     file: path=/etc/nginx/ssl state=directory
@@ -34,65 +94,21 @@
   - service: name=nginx state=reloaded
 
   - name: ensure the default site is removed
-    file: path=/etc/nginx/sites-{{ item }}/default state=absent
-    with_items:
-  - enabled
-  - available
+    file: path=/etc/nginx/sites-enabled/default state=absent
 
   - name: ensure sites-available is configured
-    copy: src=default_http dest=/etc/nginx/sites-available/default group=root owner=root
+    copy: src=openvdi.conf dest=/etc/nginx/sites-available/openvdi.conf group=root owner=root
   - service: name=nginx state=reloaded
 
   - name: ensure sites-available is symlinked to sites-enabled
-    file: src=/etc/nginx/sites-available/default dest=/etc/nginx/sites-enabled/default state=link
-
-#  - name: install git
-#    apt: pkg=git state=latest
-
-#  - name: copy ssh key for git repo
-#    copy: src=~/.ssh/repo-key/{{ item }} dest=~/.ssh/{{ item }} mode=0600
-#    with_items:
-#    - "id_rsa"
-#    - "id_rsa.pub"
+    file: src=/etc/nginx/sites-available/openvdi.conf dest=/etc/nginx/sites-enabled/openvdi.conf state=link
 
   - service: name=nginx state=started
 
-#  - name: deploy php project
-#    action: git repo=git@git.inf.um.es:jose/training.git dest=/usr/share/nginx/html/phpproject key_file=~/.ssh/repo-key/id_rsa.pub version=master accept_hostkey=yes
-
-#  - name: restart nginx
-#    service: name=nginx state=restarted
-
-#  - name: copy stackvdi database
-#    copy: src=stackvdi.sql dest=/tmp
-
-  - name: update mysql root password for all root accounts
-    mysql_user: name=root host={{ item }} priv=*.*:ALL,GRANT password={{ mysql_root_password }}
-    with_items:
-    - "{{ ansible_hostname }}"
-    - 127.0.0.1
-    - ::1
-    - localhost
-
-  - name: create .my.cnf file
-    copy: src=.my.cnf dest=/root
-
-#  - name: install database
-#    action: mysql_db name=mysql state=import target=/tmp/stackvdi.sql
-
-  - name: create db user
-    action: mysql_user name=openvdi host={{ item }} password={{ mysql_user_password }} priv=phpproject.prueba1:SELECT,INSERT,UPDATE,DELETE state=present
-    with_items:                                                             
-    - "{{ ansible_hostname }}"
-    - 127.0.0.1
-    - ::1
-    - localhost
-#    - %
-
-
-#  - name: allow remote access
-#    action: shell sed 's/127.0.0.1/{{ ip_mysql_server }}/g' /etc/mysql/my.cnf > /etc/mysql/my2.cnf
-
-#  - name: rename my2.cnf
-#    action: shell mv /etc/mysql/my2.cnf /etc/mysql/my.cnf
-  - service: name=mysql state=started
+#  - name: set up authorized keys for the openvdi user
+#    shell: ssh-keygen -t rsa
+#  - name: generate a 2048-bit SSH key for user openvdi
+#    user: name=openvdi generate_ssh_key=yes ssh_key_bits=2048
+#    authorized_key: user=openvdi key={{ item }}
+#    with_items:
+#    - ~/.ssh/id_rsa.pub
