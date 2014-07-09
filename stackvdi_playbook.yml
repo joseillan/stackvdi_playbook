@@ -1,12 +1,15 @@
 ---
-- hosts: all
+- hosts: 155.54.225.133
   sudo: yes
   vars_files:
   - vars.yml
   tasks:
+# INSTALL REQUIRED SERVICES
+
   - name: Install necessary services
-    action: apt name={{ item }}
+    action: apt update_cache=yes name={{ item }} state=latest
     with_items:
+    - "python-mysqldb"
     - "mysql-client-5.5"
     - "mysql-server"
     - "nginx-full"
@@ -17,13 +20,14 @@
     - "imagemagick"
 
   - name: create .my.cnf file
-    copy: src=.my.cnf dest=~/
+    copy: src=.my.cnf dest=~/.my.cnf
 
+  - name: copy openvdi_production database
+    copy: src=openvdi_production.sql dest=/tmp
   - name: create openvdi_production database
-    mysql_db: name=openvdi_production state=present
-
+    mysql_db: login_user=root login_password={{ mysql_root_password }} name=mysql state=import target=/tmp/openvdi_production.sql
   - name: update mysql root password for all root accounts
-    mysql_user: name=root host={{ item }} priv=*.*:ALL,GRANT password={{ mysql_root_password }}
+    mysql_user: login_user=root login_password={{ mysql_root_password }} name=root host={{ item }} priv=*.*:ALL,GRANT password={{ mysql_root_password }}
     with_items:
     - "{{ ansible_hostname }}"
     - 127.0.0.1
@@ -32,7 +36,7 @@
 #    - %
 
   - name: create db user
-    action: mysql_user name=openvdi host={{ item }} password={{ mysql_openvdi_password }} priv=phpproject.prueba1:SELECT,INSERT,UPDATE,DELETE state=present
+    mysql_user: login_user=root login_password={{ mysql_root_password }} name=openvdi host={{ item }} priv=openvdi_production.*:SELECT,INSERT,UPDATE,DELETE password={{ mysql_openvdi_password }}
     with_items:                                                             
     - "{{ ansible_hostname }}"
     - 127.0.0.1
@@ -50,39 +54,25 @@
 
   - name: create user openvdi and add to groups adm & sudo
     user: name=openvdi password={{ user_openvdi_password }} shell=/bin/bash groups=adm,sudo append=yes
-
-#  - name: create openvdi user
-#    shell: adduser openvdi
-#  - name: add openvdi user to adm group
-#    shell: adduser openvdi adm
-#  - name: add openvdi user to sudo group
-#    shell: adduser openvdi sudo
-
-- hosts: all
-#  sudo: yes
-  sudo_user: openvdi
-  vars_files:
-  - vars.yml
-  tasks:
-# Install Ruby
-  - shell: \curl -sSL https://get.rvm.io | bash -s stable
-  - shell: source /home/openvdi/.rvm/scripts/rvm
-  - shell: rvm install 2.0
-
-  - name: no check server certificate
-    shell: sed -i 's/sslVerify = true/sslVerify = false/' /~/.gitconfig
-
-- hosts: all
-  sudo: yes
-  vars_files: 
-  - vars.yml
-  tasks:
+  - name: ensure .ssh directory is created
+    file: path=/home/openvdi/.ssh state=directory
+  - name: copy cert
+    copy: src=~/.ssh/id_rsa.pub dest=/home/openvdi/.ssh/authorized_keys owner=openvdi group=openvdi
+  
   - name: create broker directory
     file: path=/var/www/openvdi state=directory owner=openvdi group=openvdi mode=0755
 
-  - name: create applet directory
-    file: path/var/www/openvdi/broker/public/applet state=directory owner=openvdi group=openvdi mode=0755
+  - name: ensure broker/config directory is created
+    file: path=/var/www/openvdi/broker/config state=directory
+  
+  - name: create file database.yml
+    copy: src=database.yml dest=/var/www/openvdi/broker/config/database.yml owner=root group=root mode=0644
 
+  - name: create applet directory
+    file: path=/var/www/openvdi/broker/public/applet state=directory owner=openvdi group=openvdi mode=0755
+
+  - name: copy applet
+    copy: src=appletvdi.jar dest=/var/www/openvdi/broker/public/applet/appletvdi.jar owner=openvdi group=openvdi mode=0644
   - name: ensure nginx ssl directory is created
     file: path=/etc/nginx/ssl state=directory
 
@@ -105,6 +95,58 @@
 
   - service: name=nginx state=started
 
+  - name: create openvdi service script
+    copy: src=openvdi dest=/etc/init.d/openvdi owner=root group=root mode=0755
+  
+#  - name: ensure sudoers is removed
+#    file: path=/etc/sudoers state=absent
+
+  - name: create new sudoers
+    copy: src=sudoers dest=/etc owner=root group=root mode=0440
+
+  - name: enable service openvdi autostart
+    file: src=/etc/init.d/openvdi dest=/etc/rc2.d/S99openvdi state=link
+  - service: name=openvdi state=started
+
+#  - name: create openvdi user
+#    shell: adduser openvdi
+#  - name: add openvdi user to adm group
+#    shell: adduser openvdi adm
+#  - name: add openvdi user to sudo group
+#    shell: adduser openvdi sudo
+
+- hosts: 155.54.225.133
+#  sudo: yes
+  remote_user: openvdi
+  vars_files:
+  - vars.yml
+  tasks:
+# INSTALL RUBY 2.0
+  - shell: \curl -sSL https://get.rvm.io | bash -s stable
+  - shell: . /home/openvdi/.rvm/scripts/rvm
+  - shell: rvm install 2.0
+
+  - name: no check server certificate
+    shell: sed -i 's/sslVerify = true/sslVerify = false/' /~/.gitconfig
+
+- hosts: 155.54.225.133
+  sudo: yes
+  vars_files: 
+  - vars.yml
+  tasks:
+# CONFIGURE RUBY
+  - command: chdir=/var/www/openvdi/broker bundle install
+  - command: chdir=/var/www/openvdi/broker RAILS_ENV=production bundle exec rake assets:precompile
+  - command: chdir=/var/www/openvdi/broker RAILS_ENV=production bundle exec rake db:migrate
+  - command: chdir=/var/www/openvdi/broker RAILS_ENV=production bundle exec rake db:seed
+
+  - service: name=nginx state=restarted
+  - service: name=openvdi state=restarted
+
+  - name: create crontab for user openvdi
+    copy: src=crontab_openvdi dest=/home/openvdi/.crontab_openvdi
+  - shell: crontab -u openvdi /home/openvdi/.crontab_openvdi
+  
 #  - name: set up authorized keys for the openvdi user
 #    shell: ssh-keygen -t rsa
 #  - name: generate a 2048-bit SSH key for user openvdi

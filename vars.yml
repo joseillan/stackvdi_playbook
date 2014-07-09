@@ -1,4 +1,4 @@
 ---
-mysql_root_password: $6$AftrMdnght$qwHHFQ5nrkcwcqpYuzAH50rHK36Q.j6m3X7BuyLsSfaw.9rTuiBcjbe1d5edlbtc/wYRQsBKciZdVKVb8CCQr0
-mysql_openvdi_password: $6$AftrMdnght$qwHHFQ5nrkcwcqpYuzAH50rHK36Q.j6m3X7BuyLsSfaw.9rTuiBcjbe1d5edlbtc/wYRQsBKciZdVKVb8CCQr0
+mysql_root_password: cambiame
+mysql_openvdi_password: cambiame
 user_openvdi_password: $6$AftrMdnght$qwHHFQ5nrkcwcqpYuzAH50rHK36Q.j6m3X7BuyLsSfaw.9rTuiBcjbe1d5edlbtc/wYRQsBKciZdVKVb8CCQr0
